@@ -35,6 +35,7 @@ import bs58 from 'bs58';
 import * as fs from 'fs';
 import * as path from 'path';
 
+// 创建日志记录器
 const transport = pino.transport({
   targets: [
     // {
@@ -53,6 +54,7 @@ const transport = pino.transport({
   ],
 });
 
+// 设置日志记录器
 export const logger = pino(
   {
     level: 'info',
@@ -65,14 +67,17 @@ export const logger = pino(
   transport,
 );
 
+// 设置网络
 const network = 'mainnet-beta';
 const RPC_ENDPOINT = retrieveEnvVariable('RPC_ENDPOINT', logger);
 const RPC_WEBSOCKET_ENDPOINT = retrieveEnvVariable('RPC_WEBSOCKET_ENDPOINT', logger);
 
+// 创建 Solana 连接
 const solanaConnection = new Connection(RPC_ENDPOINT, {
   wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
 });
 
+// 定义最小代币账户数据
 export type MinimalTokenAccountData = {
   mint: PublicKey;
   address: PublicKey;
@@ -80,6 +85,7 @@ export type MinimalTokenAccountData = {
   market?: MinimalMarketLayoutV3;
 };
 
+// 定义全局变量
 let existingLiquidityPools: Set<string> = new Set<string>();
 let existingOpenBookMarkets: Set<string> = new Set<string>();
 let existingTokenAccounts: Map<string, MinimalTokenAccountData> = new Map<string, MinimalTokenAccountData>();
@@ -98,13 +104,14 @@ const MAX_SELL_RETRIES = Number(retrieveEnvVariable('MAX_SELL_RETRIES', logger))
 
 let snipeList: string[] = [];
 
+// 初始化函数
 async function init(): Promise<void> {
-  // get wallet
+  // 获取钱包
   const PRIVATE_KEY = retrieveEnvVariable('PRIVATE_KEY', logger);
   wallet = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
-  logger.info(`Wallet Address: ${wallet.publicKey}`);
+  logger.info(`钱包地址: ${wallet.publicKey}`);
 
-  // get quote mint and amount
+  // 获取报价代币和数量
   const QUOTE_MINT = retrieveEnvVariable('QUOTE_MINT', logger);
   const QUOTE_AMOUNT = retrieveEnvVariable('QUOTE_AMOUNT', logger);
   switch (QUOTE_MINT) {
@@ -125,15 +132,15 @@ async function init(): Promise<void> {
       break;
     }
     default: {
-      throw new Error(`Unsupported quote mint "${QUOTE_MINT}". Supported values are USDC and WSOL`);
+      throw new Error(`不支持的报价代币 "${QUOTE_MINT}". 支持的值为 USDC 和 WSOL`);
     }
   }
 
   logger.info(
-    `Script will buy all new tokens using ${QUOTE_MINT}. Amount that will be used to buy each token is: ${quoteAmount.toFixed().toString()}`,
+    `脚本将使用 ${QUOTE_MINT} 购买所有新代币。将用于购买每个代币的金额为: ${quoteAmount.toFixed().toString()}`,
   );
 
-  // check existing wallet for associated token account of quote mint
+  // 检查现有钱包中的关联代币账户
   const tokenAccounts = await getTokenAccounts(solanaConnection, wallet.publicKey, commitment);
 
   for (const ta of tokenAccounts) {
@@ -146,15 +153,16 @@ async function init(): Promise<void> {
   const tokenAccount = tokenAccounts.find((acc) => acc.accountInfo.mint.toString() === quoteToken.mint.toString())!;
 
   if (!tokenAccount) {
-    throw new Error(`No ${quoteToken.symbol} token account found in wallet: ${wallet.publicKey}`);
+    throw new Error(`在钱包 ${wallet.publicKey} 中未找到 ${quoteToken.symbol} 代币账户`);
   }
 
   quoteTokenAssociatedAddress = tokenAccount.pubkey;
 
-  // load tokens to snipe
+  // 加载待抢购的代币列表
   loadSnipeList();
 }
 
+// 保存代币账户
 function saveTokenAccount(mint: PublicKey, accountData: MinimalMarketLayoutV3) {
   const ata = getAssociatedTokenAddressSync(mint, wallet.publicKey);
   const tokenAccount = <MinimalTokenAccountData>{
@@ -170,6 +178,7 @@ function saveTokenAccount(mint: PublicKey, accountData: MinimalMarketLayoutV3) {
   return tokenAccount;
 }
 
+// 处理 Raydium 池
 export async function processRaydiumPool(id: PublicKey, poolState: LiquidityStateV4) {
   if (!shouldBuy(poolState.baseMint.toString())) {
     return;
@@ -179,7 +188,7 @@ export async function processRaydiumPool(id: PublicKey, poolState: LiquidityStat
     const mintOption = await checkMintable(poolState.baseMint);
 
     if (mintOption !== true) {
-      logger.warn({ mint: poolState.baseMint }, 'Skipping, owner can mint tokens!');
+      logger.warn({ mint: poolState.baseMint }, '跳过，所有者可以铸造代币！');
       return;
     }
   }
@@ -187,6 +196,7 @@ export async function processRaydiumPool(id: PublicKey, poolState: LiquidityStat
   await buy(id, poolState);
 }
 
+// 检查是否可铸造代币
 export async function checkMintable(vault: PublicKey): Promise<boolean | undefined> {
   try {
     let { data } = (await solanaConnection.getAccountInfo(vault)) || {};
@@ -197,16 +207,17 @@ export async function checkMintable(vault: PublicKey): Promise<boolean | undefin
     return deserialize.mintAuthorityOption === 0;
   } catch (e) {
     logger.debug(e);
-    logger.error({ mint: vault }, `Failed to check if mint is renounced`);
+    logger.error({ mint: vault }, `检查铸造是否被放弃时失败`);
   }
 }
 
+// 处理 OpenBook 市场
 export async function processOpenBookMarket(updatedAccountInfo: KeyedAccountInfo) {
   let accountData: MarketStateV3 | undefined;
   try {
     accountData = MARKET_STATE_LAYOUT_V3.decode(updatedAccountInfo.accountInfo.data);
 
-    // to be competitive, we collect market data before buying the token...
+    // 为了保持竞争力，在购买代币之前收集市场数据...
     if (existingTokenAccounts.has(accountData.baseMint.toString())) {
       return;
     }
@@ -214,16 +225,17 @@ export async function processOpenBookMarket(updatedAccountInfo: KeyedAccountInfo
     saveTokenAccount(accountData.baseMint, accountData);
   } catch (e) {
     logger.debug(e);
-    logger.error({ mint: accountData?.baseMint }, `Failed to process market`);
+    logger.error({ mint: accountData?.baseMint }, `处理市场失败`);
   }
 }
 
+// 购买函数
 async function buy(accountId: PublicKey, accountData: LiquidityStateV4): Promise<void> {
   try {
     let tokenAccount = existingTokenAccounts.get(accountData.baseMint.toString());
 
     if (!tokenAccount) {
-      // it's possible that we didn't have time to fetch open book data
+      // 可能没有时间获取 OpenBook 数据
       const market = await getMinimalMarketV3(solanaConnection, accountData.marketId, commitment);
       tokenAccount = saveTokenAccount(accountData.baseMint, market);
     }
@@ -266,7 +278,7 @@ async function buy(accountId: PublicKey, accountData: LiquidityStateV4): Promise
     const signature = await solanaConnection.sendRawTransaction(transaction.serialize(), {
       preflightCommitment: commitment,
     });
-    logger.info({ mint: accountData.baseMint, signature }, `Sent buy tx`);
+    logger.info({ mint: accountData.baseMint, signature }, `发送购买交易`);
     const confirmation = await solanaConnection.confirmTransaction(
       {
         signature,
@@ -282,18 +294,19 @@ async function buy(accountId: PublicKey, accountData: LiquidityStateV4): Promise
           signature,
           url: `https://solscan.io/tx/${signature}?cluster=${network}`,
         },
-        `Confirmed buy tx`,
+        `确认购买交易`,
       );
     } else {
       logger.debug(confirmation.value.err);
-      logger.info({ mint: accountData.baseMint, signature }, `Error confirming buy tx`);
+      logger.info({ mint: accountData.baseMint, signature }, `确认购买交易时出错`);
     }
   } catch (e) {
     logger.debug(e);
-    logger.error({ mint: accountData.baseMint }, `Failed to buy token`);
+    logger.error({ mint: accountData.baseMint }, `购买代币失败`);
   }
 }
 
+// 出售函数
 async function sell(accountId: PublicKey, mint: PublicKey, amount: BigNumberish): Promise<void> {
   let sold = false;
   let retries = 0;
@@ -307,7 +320,7 @@ async function sell(accountId: PublicKey, mint: PublicKey, amount: BigNumberish)
       }
 
       if (!tokenAccount.poolKeys) {
-        logger.warn({ mint }, 'No pool keys found');
+        logger.warn({ mint }, '未找到池键');
         continue;
       }
 
@@ -316,7 +329,7 @@ async function sell(accountId: PublicKey, mint: PublicKey, amount: BigNumberish)
           {
             mint: tokenAccount.mint,
           },
-          `Empty balance, can't sell`,
+          `余额为空，无法出售`,
         );
         return;
       }
@@ -353,7 +366,7 @@ async function sell(accountId: PublicKey, mint: PublicKey, amount: BigNumberish)
       const signature = await solanaConnection.sendRawTransaction(transaction.serialize(), {
         preflightCommitment: commitment,
       });
-      logger.info({ mint, signature }, `Sent sell tx`);
+      logger.info({ mint, signature }, `发送出售交易`);
       const confirmation = await solanaConnection.confirmTransaction(
         {
           signature,
@@ -364,23 +377,24 @@ async function sell(accountId: PublicKey, mint: PublicKey, amount: BigNumberish)
       );
       if (confirmation.value.err) {
         logger.debug(confirmation.value.err);
-        logger.info({ mint, signature }, `Error confirming sell tx`);
+        logger.info({ mint, signature }, `确认出售交易时出错`);
         continue;
       }
 
       logger.info(
         { mint, signature, url: `https://solscan.io/tx/${signature}?cluster=${network}` },
-        `Confirmed sell tx`,
+        `确认出售交易`,
       );
       sold = true;
     } catch (e: any) {
       retries++;
       logger.debug(e);
-      logger.error({ mint }, `Failed to sell token, retry: ${retries}/${MAX_SELL_RETRIES}`);
+      logger.error({ mint }, `出售代币失败，重试次数: ${retries}/${MAX_SELL_RETRIES}`);
     }
   } while (!sold && retries < MAX_SELL_RETRIES);
 }
 
+// 加载抢购列表
 function loadSnipeList() {
   if (!USE_SNIPE_LIST) {
     return;
@@ -394,14 +408,16 @@ function loadSnipeList() {
     .filter((a) => a);
 
   if (snipeList.length != count) {
-    logger.info(`Loaded snipe list: ${snipeList.length}`);
+    logger.info(`已加载抢购列表: ${snipeList.length}`);
   }
 }
 
+// 是否应该购买代币
 function shouldBuy(key: string): boolean {
   return USE_SNIPE_LIST ? snipeList.includes(key) : true;
 }
 
+// 运行监听器
 const runListener = async () => {
   await init();
   const runTimestamp = Math.floor(new Date().getTime() / 1000);
@@ -490,11 +506,11 @@ const runListener = async () => {
       ],
     );
 
-    logger.info(`Listening for wallet changes: ${walletSubscriptionId}`);
+    logger.info(`监听钱包变化: ${walletSubscriptionId}`);
   }
 
-  logger.info(`Listening for raydium changes: ${raydiumSubscriptionId}`);
-  logger.info(`Listening for open book changes: ${openBookSubscriptionId}`);
+  logger.info(`监听 Raydium 变化: ${raydiumSubscriptionId}`);
+  logger.info(`监听 OpenBook 变化: ${openBookSubscriptionId}`);
 
   if (USE_SNIPE_LIST) {
     setInterval(loadSnipeList, SNIPE_LIST_REFRESH_INTERVAL);
