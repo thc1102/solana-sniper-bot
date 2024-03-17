@@ -102,6 +102,11 @@ const SNIPE_LIST_REFRESH_INTERVAL = Number(retrieveEnvVariable('SNIPE_LIST_REFRE
 const AUTO_SELL = retrieveEnvVariable('AUTO_SELL', logger) === 'true';
 const MAX_SELL_RETRIES = Number(retrieveEnvVariable('MAX_SELL_RETRIES', logger));
 
+// 获取 PoolSize 环境变量的值
+const POOL_SIZE = Number(retrieveEnvVariable('POOL_SIZE', logger));
+// 计算 targetLiquidityValue
+const POOL_SIZE_VALUE = POOL_SIZE * Math.pow(10, 9); // 以 lamports 为单位
+
 let snipeList: string[] = [];
 
 // 初始化函数
@@ -157,6 +162,8 @@ async function init(): Promise<void> {
   }
 
   quoteTokenAssociatedAddress = tokenAccount.pubkey;
+
+  logger.info(`限制流动性金额 > ${POOL_SIZE}sol`)
 
   // 加载待抢购的代币列表
   loadSnipeList();
@@ -430,8 +437,16 @@ const runListener = async () => {
       const existing = existingLiquidityPools.has(key);
 
       if (poolOpenTime > runTimestamp && !existing) {
-        existingLiquidityPools.add(key);
-        const _ = processRaydiumPool(updatedAccountInfo.accountId, poolState);
+        console.log("监控到流动性变化 代币地址:", poolState.baseMint)
+        const lay = LIQUIDITY_STATE_LAYOUT_V4.decode(updatedAccountInfo.accountInfo.data)
+        const qvalue = await solanaConnection.getBalance(lay.quoteVault)
+        const solAmount = qvalue / Math.pow(10,9)
+        console.log("流动性金额:", solAmount)
+        // 处理流动性大于设定值的币
+        if (qvalue >= POOL_SIZE_VALUE){
+          existingLiquidityPools.add(key);
+          const _ = processRaydiumPool(updatedAccountInfo.accountId, poolState);
+        }
       }
     },
     commitment,
