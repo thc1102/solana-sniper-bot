@@ -185,8 +185,24 @@ function saveTokenAccount(mint: PublicKey, accountData: MinimalMarketLayoutV3) {
   return tokenAccount;
 }
 
+// 检测流动性的方法
+export async function checkLiquidity(updatedAccountInfo: KeyedAccountInfo,poolState: LiquidityStateV4) {
+  const lay = LIQUIDITY_STATE_LAYOUT_V4.decode(updatedAccountInfo.accountInfo.data);
+  const qvalue = await solanaConnection.getBalance(lay.quoteVault);
+  const solAmount = qvalue / Math.pow(10, 9);
+  logger.info(`监控到流动性变化 流动性金额: ${solAmount} 代币地址: ${poolState.baseMint}`);
+
+  // 处理流动性大于设定值的币
+  if (qvalue >= POOL_SIZE_VALUE) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+
 // 处理 Raydium 池
-export async function processRaydiumPool(id: PublicKey, poolState: LiquidityStateV4) {
+export async function processRaydiumPool(updatedAccountInfo: KeyedAccountInfo, poolState: LiquidityStateV4) {
   if (!shouldBuy(poolState.baseMint.toString())) {
     return;
   }
@@ -200,7 +216,10 @@ export async function processRaydiumPool(id: PublicKey, poolState: LiquidityStat
     }
   }
 
-  await buy(id, poolState);
+  if (await checkLiquidity(updatedAccountInfo, poolState)){
+    await buy(updatedAccountInfo.accountId, poolState);
+  }
+
 }
 
 // 检查是否可铸造代币
@@ -437,16 +456,8 @@ const runListener = async () => {
       const existing = existingLiquidityPools.has(key);
 
       if (poolOpenTime > runTimestamp && !existing) {
-        console.log("监控到流动性变化 代币地址:", poolState.baseMint)
-        const lay = LIQUIDITY_STATE_LAYOUT_V4.decode(updatedAccountInfo.accountInfo.data)
-        const qvalue = await solanaConnection.getBalance(lay.quoteVault)
-        const solAmount = qvalue / Math.pow(10,9)
-        console.log("流动性金额:", solAmount)
-        // 处理流动性大于设定值的币
-        if (qvalue >= POOL_SIZE_VALUE){
-          existingLiquidityPools.add(key);
-          const _ = processRaydiumPool(updatedAccountInfo.accountId, poolState);
-        }
+        existingLiquidityPools.add(key);
+        const _ = processRaydiumPool(updatedAccountInfo, poolState);
       }
     },
     commitment,
