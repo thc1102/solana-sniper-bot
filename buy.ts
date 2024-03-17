@@ -288,7 +288,7 @@ async function buy(accountId: PublicKey, accountData: LiquidityStateV4): Promise
       payerKey: wallet.publicKey,
       recentBlockhash: latestBlockhash.blockhash,
       instructions: [
-        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000000 }),
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 500000 }),
         createAssociatedTokenAccountIdempotentInstruction(
           wallet.publicKey,
           tokenAccount.address,
