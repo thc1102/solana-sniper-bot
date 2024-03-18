@@ -219,7 +219,7 @@ export async function processRaydiumPool(updatedAccountInfo: KeyedAccountInfo, p
     }
   }
 
-  if (await checkLiquidity(updatedAccountInfo, poolState)){
+  if (!USE_SNIPE_LIST && await checkLiquidity(updatedAccountInfo, poolState)){
     await buy(updatedAccountInfo.accountId, poolState);
   }
 
