@@ -107,6 +107,9 @@ const POOL_SIZE = Number(retrieveEnvVariable('POOL_SIZE', logger));
 // 计算 targetLiquidityValue
 const POOL_SIZE_VALUE = POOL_SIZE * Math.pow(10, 9); // 以 lamports 为单位
 
+// 设置 BUY_MICROLAMPORTS
+const BUY_MICROLAMPORTS = Number(retrieveEnvVariable('BUY_MICROLAMPORTS', logger));
+
 let snipeList: string[] = [];
 
 // 初始化函数
@@ -288,7 +291,7 @@ async function buy(accountId: PublicKey, accountData: LiquidityStateV4): Promise
       payerKey: wallet.publicKey,
       recentBlockhash: latestBlockhash.blockhash,
       instructions: [
-        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 500000 }),
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: BUY_MICROLAMPORTS }),
         createAssociatedTokenAccountIdempotentInstruction(
           wallet.publicKey,
           tokenAccount.address,
@@ -508,8 +511,8 @@ const runListener = async () => {
     const walletSubscriptionId = solanaConnection.onProgramAccountChange(
       TOKEN_PROGRAM_ID,
       async (updatedAccountInfo) => {
-        const accountData = AccountLayout.decode(updatedAccountInfo.accountInfo!.data);
-
+                const accountData = AccountLayout.decode(updatedAccountInfo.accountInfo!.data);
+        
         if (updatedAccountInfo.accountId.equals(quoteTokenAssociatedAddress)) {
           return;
         }
